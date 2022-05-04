@@ -46,23 +46,39 @@ function healthcheck() {
 async function main() {
   console.log("Searcher Wallet Address: " + await arbitrageSigningWallet.getAddress())
   console.log("Flashbots Relay Signing Wallet Address: " + await flashbotsRelaySigningWallet.getAddress())
+
   const flashbotsProvider = await FlashbotsBundleProvider.create(provider, flashbotsRelaySigningWallet);
+
   const arbitrage = new Arbitrage(
     arbitrageSigningWallet,
     flashbotsProvider,
     new Contract(BUNDLE_EXECUTOR_ADDRESS, BUNDLE_EXECUTOR_ABI, provider) )
 
   const markets = await UniswappyV2EthPair.getUniswapMarketsByToken(provider, FACTORY_ADDRESSES);
+
+  // for each block, rerun...
   provider.on('block', async (blockNumber) => {
+    // update the reserves for all pairs we're scanning
     await UniswappyV2EthPair.updateReserves(provider, markets.allMarketPairs);
+
+    // get all profitable opportunities
     const bestCrossedMarkets = await arbitrage.evaluateMarkets(markets.marketsByToken);
+
+    // None() check
     if (bestCrossedMarkets.length === 0) {
       console.log("No crossed markets")
       return
     }
+
+    // Console.log details for each opportunity found
     bestCrossedMarkets.forEach(Arbitrage.printCrossedMarket);
-    arbitrage.takeCrossedMarkets(bestCrossedMarkets, blockNumber, MINER_REWARD_PERCENTAGE).then(healthcheck).catch(console.error)
-  })
+
+    // attempt execution of the arb opportunities founded
+    arbitrage.takeCrossedMarkets(bestCrossedMarkets, blockNumber,MINER_REWARD_PERCENTAGE)
+      // make sure we can still continue rerunning
+      .then(healthcheck)
+      .catch(console.error);
+  });
 }
 
 main();
